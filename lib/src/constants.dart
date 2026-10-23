@@ -2,6 +2,7 @@ const String pluginName = 'Serverpod';
 
 // commands
 const String cmdServerpodStart = 'serverpod.start';
+const String cmdServerpodDebug = 'serverpod.debug';
 const String cmdServerpodStop = 'serverpod.stop';
 const String cmdServerpodGenerate = 'serverpod.generate';
 const String cmdServerpodCreateMigration = 'serverpod.createMigration';
@@ -56,6 +57,7 @@ const String iconContainer = 'container';
 const String iconFolderPlus = 'folder-plus';
 const String iconUpgrade = 'circle-arrow-up';
 const String iconServer = 'server';
+const String iconBug = 'bug';
 
 // assets
 const String assetIconServerpod = 'assets/icon_serverpod.svg';

@@ -89,14 +89,23 @@ class ServerLaunchOptions {
 
   /// The command that starts the server: `serverpod start` from Serverpod 4,
   /// `dart bin/main.dart` before it or without the CLI.
+  ///
+  /// `serverpod start` always serves the VM service a debugger attaches to.
+  /// `dart` serves it when [debug] is set, and then waits at the start for
+  /// breakpoints.
   ({String executable, List<String> arguments}) command(
-    ServerpodVersion? version,
-  ) {
+    ServerpodVersion? version, {
+    bool debug = false,
+  }) {
     final supportsStart = version?.supportsStart ?? false;
     if (!supportsStart) {
       return (
         executable: executableDart,
-        arguments: ['bin/main.dart', ..._serverArguments],
+        arguments: [
+          if (debug) ...['--enable-vm-service=0', '--pause-isolates-on-start'],
+          'bin/main.dart',
+          ..._serverArguments,
+        ],
       );
     }
 

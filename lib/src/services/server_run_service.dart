@@ -4,6 +4,7 @@ import 'package:lumide_api/lumide_api.dart';
 import 'package:lumide_serverpod/src/constants.dart';
 import 'package:lumide_serverpod/src/models/models.dart';
 import 'package:lumide_serverpod/src/services/cli_service.dart';
+import 'package:lumide_serverpod/src/services/debug/debug.dart';
 import 'package:lumide_serverpod/src/services/log_service.dart';
 import 'package:lumide_serverpod/src/services/process_hub.dart';
 import 'package:lumide_serverpod/src/services/project_service.dart';
@@ -31,6 +32,15 @@ class ServerRunService {
 
   final Map<String, _RunningServer> _running = {};
   final Map<String, Future<LumideOutputChannel>> _channels = {};
+  late final DebugSessions _debugSessions = DebugSessions(
+    context,
+    onLaunch: debug,
+    onStop: (debugger) async {
+      if (_running[debugger.serverRoot] case final running?) {
+        await _stop(running);
+      }
+    },
+  );
 
   static const _stopTimeout = Duration(seconds: 15);
 
@@ -48,6 +58,7 @@ class ServerRunService {
   }
 
   Future<void> init() async {
+    _debugSessions.init();
     context.launch.onResolveConfigurations(_resolveConfigurations);
     context.launch.onConfigure(_configure);
     context.launch.onLaunch(_launch);
@@ -55,15 +66,15 @@ class ServerRunService {
       id: launchProviderServerpod,
       title: pluginName,
       workspacePatterns: const ['pubspec.yaml'],
-      kinds: const [LumideLaunchKind.run],
-      defaultKinds: const [LumideLaunchKind.run],
+      kinds: _kinds,
+      defaultKinds: _kinds,
       icon: iconServer,
       iconPath: assetIconServerpodSolid,
       configurationSchema: 'schemas/launch.schema.json',
       configurationSnippets: const [
         {
           'name': 'Serverpod Server',
-          'kinds': ['run'],
+          'kinds': ['run', 'debug'],
           'config': {
             'server': r'${workspaceFolder}/my_project_server',
             'mode': defaultRunMode,
@@ -87,13 +98,22 @@ class ServerRunService {
     );
   }
 
-  Future<void> start([Map<String, dynamic>? args]) async {
+  Future<void> start([Map<String, dynamic>? args]) =>
+      _start(LumideLaunchKind.run, args);
+
+  Future<void> debug([Map<String, dynamic>? args]) =>
+      _start(LumideLaunchKind.debug, args);
+
+  Future<void> _start(
+    LumideLaunchKind kind,
+    Map<String, dynamic>? args,
+  ) async {
     final server = await projectService.pickServer(args: args);
     if (server == null) return;
     await _launch(
       LumideLaunchRequest(
         providerId: launchProviderServerpod,
-        kind: LumideLaunchKind.run,
+        kind: kind,
         configuration: await _configurationFor(server),
       ),
     );
@@ -188,12 +208,23 @@ class ServerRunService {
       return;
     }
 
+    final debug = request.kind == LumideLaunchKind.debug;
+    final debugged = _debugSessions.active;
+    if (debug && debugged != null) {
+      final message = 'Stop debugging ${debugged.name} before debugging '
+          '${server.name}.';
+      await context.window.showMessage(message, title: pluginName);
+      await _endLaunch(event, message: message);
+      return;
+    }
+
     final options = ServerLaunchOptions.fromConfig(
       configuration.arguments,
       defaults: await _defaultOptions(server),
     );
     final version = await cliService.version();
-    final command = options.command(version);
+    final usesStart = version?.supportsStart ?? false;
+    final command = options.command(version, debug: debug);
     final output = await _channelFor(server);
     await output.clear();
     if (request.revealOutput) await output.show(preserveFocus: true);
@@ -226,19 +257,49 @@ class ServerRunService {
       return;
     }
 
+    final debugger = switch (debug) {
+      true => ServerDebugger(
+          context: context,
+          sessionId: 'serverpod.debug:${server.root}',
+          name: server.name,
+          serverRoot: server.root,
+          output: output,
+          logService: logService,
+          pausesOnStart: !usesStart,
+        ),
+      false => null,
+    };
     final running = _RunningServer(
       server: server,
       process: process,
       event: event,
       options: options,
-      usesStart: command.executable == executableServerpod,
+      usesStart: usesStart,
+      debugger: debugger,
     );
     _running[server.root] = running;
+    if (debugger != null && _debugSessions.open(debugger)) {
+      await debugger.start();
+    }
     await context.launch.didStart(event);
     onDidChange?.call();
 
+    final announcement = switch (usesStart) {
+      true => VmServiceAnnouncement.serverpodProxy,
+      false => VmServiceAnnouncement.dartVm,
+    };
+    final lines = LineBuffer();
     final forwarding = Future.wait([
-      process.stdout.forEach(output.append),
+      process.stdout.forEach((chunk) {
+        unawaited(output.append(chunk));
+        if (debugger == null || debugger.isAttached) return;
+        for (final line in lines.add(chunk)) {
+          if (announcement.webSocketUriIn(line) case final uri?) {
+            unawaited(debugger.attach(uri));
+            return;
+          }
+        }
+      }),
       process.stderr.forEach(output.append),
     ]);
     unawaited(_watchExit(running, output, forwarding));
@@ -256,12 +317,20 @@ class ServerRunService {
     }
     await output.appendLine('${running.server.name} stopped '
         '(exit code $exitCode).');
+    if (running.debugger case final debugger?) {
+      await debugger.end(message: '${running.server.name} stopped.');
+      _debugSessions.close(debugger);
+    }
     await _endLaunch(running.event, exitCode: exitCode);
     onDidChange?.call();
   }
 
-  Future<void> _stop(_RunningServer running) =>
-      running.process.stop(timeout: _stopTimeout);
+  /// Stops [running], first letting go of it in the debugger, so a server
+  /// paused on a breakpoint can shut down.
+  Future<void> _stop(_RunningServer running) async {
+    await running.debugger?.release();
+    await running.process.stop(timeout: _stopTimeout);
+  }
 
   Future<void> _endLaunch(
     LumideLaunchEvent event, {
@@ -291,7 +360,7 @@ class ServerRunService {
       id: 'server:${server.root}',
       label: server.name,
       description: pluginName,
-      kinds: const [LumideLaunchKind.run],
+      kinds: _kinds,
       iconPath: assetIconServerpod,
       noTint: true,
       arguments: {'server': server.root},
@@ -364,6 +433,8 @@ class ServerRunService {
     );
   }
 
+  static const _kinds = [LumideLaunchKind.run, LumideLaunchKind.debug];
+
   /// Whether [server] is in [folder], or [folder] is inside [server].
   static bool _belongsTo(ServerPackage server, String folder) =>
       server.contains(folder) || path.isWithin(folder, server.root);
@@ -376,6 +447,7 @@ class _RunningServer {
     required this.event,
     required this.options,
     required this.usesStart,
+    this.debugger,
   });
 
   final ServerPackage server;
@@ -385,4 +457,7 @@ class _RunningServer {
 
   /// Whether the server runs with `serverpod start`.
   final bool usesStart;
+
+  /// The debugger, when the server was started for debugging.
+  final ServerDebugger? debugger;
 }

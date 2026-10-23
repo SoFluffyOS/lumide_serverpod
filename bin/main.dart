@@ -89,6 +89,7 @@ class ServerpodPlugin extends LumidePlugin {
   Future<void> _registerCommands(LumideContext context) async {
     final callbacks = <String, Future<void> Function(Map<String, dynamic>?)>{
       cmdServerpodStart: runService.start,
+      cmdServerpodDebug: runService.debug,
       cmdServerpodStop: runService.stop,
       cmdServerpodGenerate: serverpodService.generate,
       cmdServerpodCreateMigration: serverpodService.createMigration,

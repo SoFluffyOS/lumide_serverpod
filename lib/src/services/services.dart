@@ -1,4 +1,5 @@
 export 'cli_service.dart';
+export 'debug/debug.dart';
 export 'generate_on_save.dart';
 export 'log_service.dart';
 export 'process_hub.dart';

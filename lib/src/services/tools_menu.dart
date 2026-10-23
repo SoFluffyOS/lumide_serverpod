@@ -14,6 +14,7 @@ class ToolsMenu {
     final selected = await context.window.showQuickPick(
       [
         _item(cmdServerpodStart, iconPlay),
+        _item(cmdServerpodDebug, iconBug),
         if (running) _item(cmdServerpodStop, iconStop),
         _item(cmdServerpodGenerate, iconCode),
         _item(cmdServerpodCreateMigration, iconDatabase),

@@ -6,6 +6,7 @@ import 'package:lumide_serverpod/src/constants.dart';
 /// `test/commands_manifest_test.dart` enforces it.
 const Map<String, String> serverpodCommandTitles = {
   cmdServerpodStart: 'Serverpod: Start Server',
+  cmdServerpodDebug: 'Serverpod: Debug Server',
   cmdServerpodStop: 'Serverpod: Stop Server',
   cmdServerpodGenerate: 'Serverpod: Generate Code',
   cmdServerpodCreateMigration: 'Serverpod: Create Migration',

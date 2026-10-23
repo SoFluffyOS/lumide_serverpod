@@ -55,6 +55,9 @@ contributes:
     - id: serverpod.start
       title: 'Serverpod: Start Server'
       category: 'Serverpod'
+    - id: serverpod.debug
+      title: 'Serverpod: Debug Server'
+      category: 'Serverpod'
     - id: serverpod.stop
       title: 'Serverpod: Stop Server'
       category: 'Serverpod'

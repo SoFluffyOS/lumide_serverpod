@@ -7,6 +7,7 @@ The official [Serverpod](https://serverpod.dev) extension for [Lumide IDE](https
 ## Highlights
 
 - Start and stop servers from Lumide's Run controls, with hot reload on Serverpod 4.
+- Debug servers: breakpoints, conditions, logpoints, stepping, variables, and evaluation.
 - Generate code when a model or endpoint file is saved.
 - Create migrations and repair migrations, and apply pending migrations.
 - Check model files (`.spy.yaml`) as you type, and jump between models.
@@ -31,6 +32,7 @@ Use the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`), or click the Serverpod
 | Command | Purpose |
 | --- | --- |
 | `serverpod.start` / `serverpod.stop` | Start or stop a server |
+| `serverpod.debug` | Start a server in the debugger |
 | `serverpod.generate` | Run `serverpod generate` |
 | `serverpod.createMigration` | Create a migration, an empty one, or a forced one, with an optional tag |
 | `serverpod.createRepairMigration` | Create a repair migration against a run mode's database |
@@ -62,6 +64,14 @@ To change how a server starts, add an entry to `.sofluffy/lumide/launch.json`:
 ```
 
 `watch`, `docker`, and `launchFlutterApps` turn `serverpod start` options on or off.
+
+## Debugging
+
+Click **Debug** in the Run controls, or run **Serverpod: Debug Server**, then call an endpoint. Breakpoints stop in endpoints, models, and any server code, and support conditions and logpoints.
+
+On Serverpod 4, the debugger attaches to the VM service `serverpod start` serves. Hot reload keeps working, and when the server restarts, the debugger reconnects and sets your breakpoints again. Code that runs before the debugger attaches, such as `main`, is not stopped in. With older versions, the server waits at its start until your breakpoints are set.
+
+One server is debugged at a time.
 
 ## Settings
 
