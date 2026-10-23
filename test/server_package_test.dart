@@ -2,6 +2,8 @@ import 'package:lumide_serverpod/lumide_serverpod.dart';
 import 'package:path/path.dart' as path;
 import 'package:test/test.dart';
 
+import 'support/fake_host.dart';
+
 void main() {
   final root = path.join(path.current, 'my_project', 'my_project_server');
 
@@ -117,5 +119,19 @@ dependencies:
         );
       }
     });
+  });
+
+  test('serverAt finds a server however its root is spelled', () async {
+    final host = FakeHost(serverRoot: path.join(path.current, 'app_server'));
+    final projectService = ProjectService(host);
+    await projectService.refresh();
+
+    expect(
+      projectService
+          .serverAt('${path.join(path.current, 'app_server')}/')
+          ?.name,
+      'app_server',
+    );
+    expect(projectService.serverAt(path.current), isNull);
   });
 }

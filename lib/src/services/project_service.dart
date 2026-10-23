@@ -39,6 +39,16 @@ class ProjectService {
     return _servers;
   }
 
+  /// The server package whose root is [root], however the path is
+  /// spelled: with a trailing separator, or another drive letter case on
+  /// Windows.
+  ServerPackage? serverAt(String root) {
+    for (final server in _servers) {
+      if (path.equals(server.root, root)) return server;
+    }
+    return null;
+  }
+
   /// The innermost server package holding [filePath].
   ServerPackage? serverFor(String filePath) {
     ServerPackage? match;

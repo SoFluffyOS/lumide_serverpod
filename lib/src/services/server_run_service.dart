@@ -186,7 +186,10 @@ class ServerRunService {
     if (request.providerId != launchProviderServerpod) return null;
     final configuration = request.configuration;
     if (request.actionId == 'stop' && configuration != null) {
-      final serverRoot = await _serverRootFor(configuration);
+      final serverRoot = switch (await _serverRootFor(configuration)) {
+        final root? => projectService.serverAt(root)?.root,
+        null => null,
+      };
       if (serverRoot != null && _launching.contains(serverRoot)) {
         _stopRequested.add(serverRoot);
       }
@@ -434,8 +437,13 @@ class ServerRunService {
     if (projectService.servers.isEmpty) await projectService.refresh();
     final serverRoot = await _serverRootFor(configuration);
     if (serverRoot != null) {
-      for (final server in projectService.servers) {
-        if (server.root == serverRoot) return server;
+      if (projectService.serverAt(serverRoot) case final server?) {
+        return server;
+      }
+      // A server created since the last scan.
+      await projectService.refresh();
+      if (projectService.serverAt(serverRoot) case final server?) {
+        return server;
       }
       await context.window.showMessage(
         'No Serverpod server in $serverRoot.',
