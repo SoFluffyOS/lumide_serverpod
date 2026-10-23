@@ -120,10 +120,11 @@ class CliService {
     final cancelListener = progress.onCancel(
       () => unawaited(process.stop()),
     );
+    final writer = OutputWriter(output);
     final forwarding = Future.wait([
-      process.stdout.forEach((chunk) => appendQuietly(output, chunk)),
-      process.stderr.forEach((chunk) => appendQuietly(output, chunk)),
-    ]);
+      process.stdout.forEach(writer.add),
+      process.stderr.forEach(writer.add),
+    ]).then((_) => writer.close());
     try {
       final exitCode = await process.exitCode;
       await forwarding;

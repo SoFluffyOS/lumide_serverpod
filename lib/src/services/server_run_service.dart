@@ -342,9 +342,10 @@ class ServerRunService {
     required VmServiceAnnouncement announcement,
   }) {
     final lines = LineBuffer();
+    final writer = OutputWriter(output);
     return Future.wait([
       process.stdout.forEach((chunk) {
-        appendQuietly(output, chunk);
+        writer.add(chunk);
         if (debugger == null || debugger.isAttached) return;
         for (final line in lines.add(chunk)) {
           if (announcement.webSocketUriIn(line) case final uri?) {
@@ -353,8 +354,8 @@ class ServerRunService {
           }
         }
       }),
-      process.stderr.forEach((chunk) => appendQuietly(output, chunk)),
-    ]);
+      process.stderr.forEach(writer.add),
+    ]).then((_) => writer.close());
   }
 
   /// Reports the end of [running] once its process exits, whatever fails
