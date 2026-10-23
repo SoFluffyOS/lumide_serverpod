@@ -50,6 +50,14 @@ void main() {
     });
   });
 
+  test('LineBuffer keeps only the start of an overlong line', () {
+    final buffer = LineBuffer(maxLineLength: 8);
+
+    expect(buffer.add('VM servi'), isEmpty);
+    expect(buffer.add('ce proxy listening'), isEmpty);
+    expect(buffer.add(' on x\nnext\n'), ['VM servi', 'next']);
+  });
+
   group('debug command', () {
     test('serves the VM service and waits at the start with dart', () {
       final command = const ServerLaunchOptions().command(null, debug: true);

@@ -26,26 +26,49 @@ enum VmServiceAnnouncement {
 }
 
 /// Splits streamed output into whole lines.
+///
+/// A line longer than [maxLineLength] keeps only its start, which is where
+/// an announcement would be; output without line breaks, such as progress
+/// redrawn with carriage returns, cannot grow it without limit.
 class LineBuffer {
-  final StringBuffer _partial = StringBuffer();
+  LineBuffer({this.maxLineLength = 64 * 1024});
+
+  final int maxLineLength;
+  String _partial = '';
 
   /// The lines [chunk] completes. A trailing partial line waits for the
   /// next chunk.
   List<String> add(String chunk) {
-    _partial.write(chunk);
-    final text = _partial.toString();
-    final lastBreak = text.lastIndexOf('\n');
-    if (lastBreak < 0) return const [];
+    final firstBreak = chunk.indexOf('\n');
+    if (firstBreak < 0) {
+      _keep(chunk);
+      return const [];
+    }
 
-    _partial
-      ..clear()
-      ..write(text.substring(lastBreak + 1));
+    _keep(chunk.substring(0, firstBreak));
+    final completed = _partial;
+    final lastBreak = chunk.lastIndexOf('\n');
+    final whole = switch (lastBreak > firstBreak) {
+      true => chunk.substring(firstBreak + 1, lastBreak).split('\n'),
+      false => const <String>[],
+    };
+    _partial = '';
+    _keep(chunk.substring(lastBreak + 1));
     return [
-      for (final line in text.substring(0, lastBreak).split('\n'))
+      for (final line in [completed, ...whole])
         switch (line.endsWith('\r')) {
           true => line.substring(0, line.length - 1),
           false => line,
         },
     ];
+  }
+
+  void _keep(String text) {
+    final room = maxLineLength - _partial.length;
+    if (room <= 0) return;
+    _partial += switch (text.length > room) {
+      true => text.substring(0, room),
+      false => text,
+    };
   }
 }
