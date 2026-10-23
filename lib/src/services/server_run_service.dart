@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:lumide_api/lumide_api.dart';
 import 'package:lumide_serverpod/src/constants.dart';
@@ -6,6 +7,7 @@ import 'package:lumide_serverpod/src/models/models.dart';
 import 'package:lumide_serverpod/src/services/cli_service.dart';
 import 'package:lumide_serverpod/src/services/debug/debug.dart';
 import 'package:lumide_serverpod/src/services/log_service.dart';
+import 'package:lumide_serverpod/src/services/other_instance.dart';
 import 'package:lumide_serverpod/src/services/output_writer.dart';
 import 'package:lumide_serverpod/src/services/plugin_files.dart';
 import 'package:lumide_serverpod/src/services/process_hub.dart';
@@ -52,6 +54,10 @@ class ServerRunService {
   );
 
   static const _stopTimeout = Duration(seconds: 15);
+
+  /// How many lines of a server's output are read for what it announces
+  /// at startup, once a debugger has its address.
+  static const _startupLines = 500;
 
   /// The supervisor's own stop, interrupt to kill, takes up to 15 seconds.
   static const _supervisedStopTimeout = Duration(seconds: 17);
@@ -321,6 +327,7 @@ class ServerRunService {
       false => null,
     };
     final running = _RunningServer(
+      request: request,
       server: server,
       process: process,
       event: event,
@@ -334,13 +341,26 @@ class ServerRunService {
 
     // Output is read from the start, whatever happens below, so the
     // process never buffers it unread.
+    final announcement = switch (usesStart) {
+      true => VmServiceAnnouncement.serverpodProxy,
+      false => VmServiceAnnouncement.dartVm,
+    };
+    var startupLines = 0;
     final forwarding = _forwardOutput(
       process,
       output,
-      debugger: debugger,
-      announcement: switch (usesStart) {
-        true => VmServiceAnnouncement.serverpodProxy,
-        false => VmServiceAnnouncement.dartVm,
+      onLine: (line) {
+        if (usesStart && line.contains(OtherInstance.marker)) {
+          running.otherInstanceRuns = true;
+        }
+        final debuggerWaiting = debugger != null && !debugger.isAttached;
+        if (debuggerWaiting) {
+          if (announcement.webSocketUriIn(line) case final uri?) {
+            unawaited(debugger.attach(uri));
+          }
+        }
+        startupLines++;
+        return debuggerWaiting || startupLines < _startupLines;
       },
     );
     try {
@@ -354,23 +374,23 @@ class ServerRunService {
     if (_stopRequested.contains(server.root)) await _stop(running);
   }
 
+  /// Writes the process output to [output], and hands each line to
+  /// [onLine] until it returns false: only startup lines need reading.
   Future<void> _forwardOutput(
     HostProcess process,
     LumideOutputChannel output, {
-    required ServerDebugger? debugger,
-    required VmServiceAnnouncement announcement,
+    required bool Function(String line) onLine,
   }) {
     final lines = LineBuffer();
     final writer = OutputWriter(output);
+    var reading = true;
     return Future.wait([
       process.stdout.forEach((chunk) {
         writer.add(chunk);
-        if (debugger == null || debugger.isAttached) return;
+        if (!reading) return;
         for (final line in lines.add(chunk)) {
-          if (announcement.webSocketUriIn(line) case final uri?) {
-            unawaited(debugger.attach(uri));
-            return;
-          }
+          reading = onLine(line);
+          if (!reading) return;
         }
       }),
       process.stderr.forEach(writer.add),
@@ -401,7 +421,37 @@ class ServerRunService {
       }
       await _endLaunch(running.event, exitCode: exitCode);
       onDidChange?.call();
+      if (running.otherInstanceRuns) {
+        unawaited(_offerToStopOtherInstance(running));
+      }
     }
+  }
+
+  /// `serverpod start` refuses to run a server another instance runs, such
+  /// as one an earlier Lumide session left behind. Offers to stop that one
+  /// and start again.
+  Future<void> _offerToStopOtherInstance(_RunningServer running) async {
+    final server = running.server;
+    if (_disposed || Platform.isWindows) return;
+    final stopIt = await context.window.showConfirmDialog(
+      '${server.name} is already running outside Lumide, probably left over '
+      'from an earlier session. Stop it and start again?',
+      title: pluginName,
+    );
+    if (!stopIt || _disposed) return;
+
+    final output = await _channelFor(server);
+    await output.appendLine('Stopping the other ${server.name}…');
+    if (!await OtherInstance(context.shell).stop(server.root)) {
+      await context.window.showMessage(
+        'Could not stop the other ${server.name}. End its process, then '
+        'start again.',
+        type: MessageType.error,
+        title: pluginName,
+      );
+      return;
+    }
+    await _launch(running.request);
   }
 
   /// Stops [running], first letting go of it in the debugger, so a server
@@ -554,7 +604,8 @@ class ServerRunService {
 }
 
 class _RunningServer {
-  const _RunningServer({
+  _RunningServer({
+    required this.request,
     required this.server,
     required this.process,
     required this.event,
@@ -564,6 +615,8 @@ class _RunningServer {
     this.debugger,
   });
 
+  /// The launch that started the server, to start it again.
+  final LumideLaunchRequest request;
   final ServerPackage server;
   final HostProcess process;
   final LumideLaunchEvent event;
@@ -577,4 +630,7 @@ class _RunningServer {
 
   /// The debugger, when the server was started for debugging.
   final ServerDebugger? debugger;
+
+  /// Whether `serverpod start` found another instance of the server.
+  bool otherInstanceRuns = false;
 }

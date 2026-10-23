@@ -115,4 +115,31 @@ void main() {
     expect(script, endsWith('bin/supervise.dart'));
     expect(arguments.take(2), ['serverpod', 'start']);
   });
+
+  test('offers to stop another instance and starts again', () async {
+    await runService.start();
+    host.shell
+      ..emitStdout(
+        100,
+        'A serverpod instance for "app" is already running (MCP socket:\n',
+      )
+      ..emitExit(100, 0);
+    await settle();
+
+    expect(host.window.confirmations.single, contains('already running'));
+    expect(host.shell.spawned, hasLength(2));
+    expect(runService.runningServers, ['app_server']);
+  });
+
+  test('leaves another instance alone when the user says no', () async {
+    host.window.confirm = false;
+    await runService.start();
+    host.shell
+      ..emitStdout(100, 'is already running (MCP socket: x\n')
+      ..emitExit(100, 0);
+    await settle();
+
+    expect(host.shell.spawned, hasLength(1));
+    expect(host.shell.ran.where((command) => command.first == 'kill'), isEmpty);
+  });
 }

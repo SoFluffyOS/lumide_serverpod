@@ -38,6 +38,10 @@ class FakeShell implements LumideShell {
 
   /// When set, spawns wait for it.
   Completer<void>? spawnGate;
+
+  /// Answers to [run] by command line, such as `pgrep -f ...`; each answer
+  /// is used once, then the last one repeats.
+  final answers = <String, List<String>>{};
   String versionOutput = 'Serverpod version: 4.0.4';
   final _stdout = <void Function(int, String)>[];
   final _stderr = <void Function(int, String)>[];
@@ -64,6 +68,13 @@ class FakeShell implements LumideShell {
     String? stdin,
   }) async {
     ran.add([command, ...arguments]);
+    if (answers[command] case final replies? when replies.isNotEmpty) {
+      final reply = switch (replies.length) {
+        1 => replies.first,
+        _ => replies.removeAt(0),
+      };
+      return ProcessResult(exitCode: 0, stdout: reply, stderr: '');
+    }
     if (arguments case ['version']) {
       return ProcessResult(exitCode: 0, stdout: versionOutput, stderr: '');
     }
@@ -111,6 +122,15 @@ class FakeShell implements LumideShell {
 
 class FakeWindow implements LumideWindow {
   final messages = <String>[];
+  final confirmations = <String>[];
+  bool confirm = true;
+
+  @override
+  Future<bool> showConfirmDialog(String message, {String? title}) async {
+    confirmations.add(message);
+    return confirm;
+  }
+
   final channels = <FakeOutput>[];
 
   /// How many output channels fail to open before they work.

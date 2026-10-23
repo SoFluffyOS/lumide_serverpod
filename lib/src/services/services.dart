@@ -2,6 +2,7 @@ export 'cli_service.dart';
 export 'debug/debug.dart';
 export 'generate_on_save.dart';
 export 'log_service.dart';
+export 'other_instance.dart';
 export 'output_writer.dart';
 export 'plugin_files.dart';
 export 'process_hub.dart';
