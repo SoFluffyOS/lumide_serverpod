@@ -24,8 +24,9 @@ class ServerDebugger {
     required this.logService,
     this.pausesOnStart = false,
     Future<VmService> Function(String uri)? connect,
-    this.reconnectDelay = const Duration(seconds: 1),
-    this.reconnectAttempts = 60,
+    this.reconnectDelay = const Duration(milliseconds: 250),
+    this.maxReconnectDelay = const Duration(seconds: 5),
+    this.releaseTimeout = const Duration(seconds: 2),
   })  : _connectTo = connect ?? vmServiceConnectUri,
         _resumeAtStart = pausesOnStart;
 
@@ -42,8 +43,15 @@ class ServerDebugger {
   /// Whether the server's isolates wait at their start, so breakpoints are
   /// installed before any code runs.
   final bool pausesOnStart;
+
+  /// The first wait between connection attempts; it doubles up to
+  /// [maxReconnectDelay]. Attempts go on until the debugger ends, which
+  /// happens when the server exits.
   final Duration reconnectDelay;
-  final int reconnectAttempts;
+  final Duration maxReconnectDelay;
+
+  /// How long [release] may take before the server is stopped anyway.
+  final Duration releaseTimeout;
 
   final Future<VmService> Function(String uri) _connectTo;
   final DebugInspector _inspector = DebugInspector();
@@ -70,6 +78,12 @@ class ServerDebugger {
   int _generation = 0;
   bool _ended = false;
   final List<StreamSubscription<Event>> _subscriptions = [];
+
+  /// VM events, breakpoint changes and releases run one at a time, in
+  /// order, so a late pause cannot overwrite a resume and two breakpoint
+  /// syncs cannot install the same breakpoint twice.
+  Future<void> _queue = Future<void>.value();
+  bool _pushScheduled = false;
 
   bool _resumeAtStart;
   bool _receivedBreakpoints = false;
@@ -100,12 +114,21 @@ class ServerDebugger {
   }
 
   /// Leaves the server running freely, so it can shut down: removes the
-  /// breakpoints and resumes it when paused.
+  /// breakpoints and resumes it when paused. Gives up after
+  /// [releaseTimeout], so a wedged server can still be stopped.
   Future<void> release() async {
-    final service = _service;
-    final isolateId = _isolateId;
     _requested = const [];
     _exceptionPauseMode = LumideDebugExceptionPauseMode.none;
+    try {
+      await _serially(_release).timeout(releaseTimeout);
+    } on TimeoutException {
+      logService.warn('$name did not answer the debugger; stopping it.');
+    }
+  }
+
+  Future<void> _release() async {
+    final service = _service;
+    final isolateId = _isolateId;
     if (service == null || isolateId == null) return;
     try {
       await service.setIsolatePauseMode(
@@ -156,14 +179,16 @@ class ServerDebugger {
 
   Future<void> stepOut() => _resume(StepOption.kOut);
 
-  Future<void> setBreakpoints(List<LumideDebugBreakpoint> breakpoints) async {
-    _requested = {
-      for (final breakpoint in breakpoints) _keyFor(breakpoint): breakpoint,
-    }.values.toList();
-    _receivedBreakpoints = true;
-    await _syncBreakpoints();
-    await _pushBreakpoints();
-    await _resumeAtStartIfReady();
+  Future<void> setBreakpoints(List<LumideDebugBreakpoint> breakpoints) {
+    return _serially(() async {
+      _requested = {
+        for (final breakpoint in breakpoints) _keyFor(breakpoint): breakpoint,
+      }.values.toList();
+      _receivedBreakpoints = true;
+      await _syncBreakpoints();
+      _schedulePush();
+      await _resumeAtStartIfReady();
+    });
   }
 
   Future<void> setExceptionPauseMode(LumideDebugExceptionPauseMode mode) async {
@@ -227,36 +252,35 @@ class ServerDebugger {
     final generation = ++_generation;
 
     VmService? service;
-    for (var attempt = 0; attempt < reconnectAttempts; attempt++) {
+    var delay = reconnectDelay;
+    while (service == null) {
       if (_ended || generation != _generation) return;
       try {
         service = await _connectTo(uri);
-        break;
       } catch (_) {
-        await Future<void>.delayed(reconnectDelay);
+        await Future<void>.delayed(delay);
+        delay = switch (delay * 2 < maxReconnectDelay) {
+          true => delay * 2,
+          false => maxReconnectDelay,
+        };
       }
     }
     if (_ended || generation != _generation) {
-      await service?.dispose();
-      return;
-    }
-    if (service == null) {
-      await _update(
-        LumideDebugSessionState.running,
-        message: 'Could not connect the debugger to $name.',
-      );
+      await service.dispose();
       return;
     }
 
     _service = service;
     unawaited(service.onDone.then((_) => _handleDisconnect(generation)));
     try {
+      // Listen before subscribing, so no event the VM sends right after is
+      // missed.
+      _subscriptions
+        ..add(service.onDebugEvent.listen(_enqueueEvent))
+        ..add(service.onIsolateEvent.listen(_enqueueEvent));
       await service.streamListen(EventStreams.kDebug);
       await service.streamListen(EventStreams.kIsolate);
-      _subscriptions
-        ..add(service.onDebugEvent.listen(_handleEvent))
-        ..add(service.onIsolateEvent.listen(_handleEvent));
-      await _selectIsolate();
+      await _serially(_selectIsolate);
     } catch (error) {
       logService.error('Could not attach the debugger to $name', error);
     }
@@ -330,7 +354,25 @@ class ServerDebugger {
     }
     if (!_receivedBreakpoints) return;
     await _syncBreakpoints();
-    await _pushBreakpoints();
+    _schedulePush();
+  }
+
+  void _enqueueEvent(Event event) {
+    unawaited(_serially(() => _handleEvent(event)));
+  }
+
+  /// Runs [action] after everything queued before it. Its errors are
+  /// logged, not thrown, since nothing awaits most queued work.
+  Future<void> _serially(Future<void> Function() action) {
+    final result = _queue.then((_) async {
+      try {
+        await action();
+      } catch (error) {
+        if (!_ended) logService.warn('Debugger: $error');
+      }
+    });
+    _queue = result;
+    return result;
   }
 
   Future<void> _handleEvent(Event event) async {
@@ -338,30 +380,30 @@ class ServerDebugger {
     final isolateId = event.isolate?.id;
     if (kind == null || _ended) return;
 
-    // Every isolate the server spawns waits at its start too; only the
-    // debugged one waits for breakpoints.
-    final otherIsolateStart = kind == EventKind.kPauseStart &&
-        pausesOnStart &&
-        isolateId != null &&
-        _isolateId != null &&
-        isolateId != _isolateId;
-    if (otherIsolateStart) {
-      await _service?.resume(isolateId);
+    // One isolate is debugged: the server's main one. Breakpoints and the
+    // exception pause mode are set in it alone, so other isolates only
+    // pause at their start, when the server waits there for breakpoints.
+    final otherIsolate =
+        isolateId != null && _isolateId != null && isolateId != _isolateId;
+    if (otherIsolate) {
+      if (kind == EventKind.kPauseStart) await _service?.resume(isolateId);
       return;
     }
-
-    final isPause = kind.startsWith('Pause');
-    if (isolateId != null && (isPause || _isolateId == null)) {
+    if (isolateId != null && _isolateId == null) {
       await _useIsolate(isolateId);
     }
-    if (isolateId != null && isolateId != _isolateId) return;
 
     switch (kind) {
       case EventKind.kPauseStart:
         _pauseEvent = event;
         if (_resumeAtStart) {
           await _resumeAtStartIfReady();
-          unawaited(_resumeAtStartAfterWait());
+          unawaited(
+            Future<void>.delayed(
+              _breakpointWait,
+              () => _serially(_resumeAtStartWithoutBreakpoints),
+            ),
+          );
           return;
         }
         await _showPaused(event);
@@ -384,11 +426,11 @@ class ServerDebugger {
             EventKind.kBreakpointResolved ||
             EventKind.kBreakpointRemoved:
         _applyBreakpointEvent(kind, event.breakpoint);
-        await _pushBreakpoints();
+        _schedulePush();
       case EventKind.kIsolateRunnable || EventKind.kIsolateReload:
         if (!_receivedBreakpoints) return;
         await _syncBreakpoints();
-        await _pushBreakpoints();
+        _schedulePush();
       case EventKind.kIsolateExit:
         _isolateId = null;
         _installed = {};
@@ -447,8 +489,7 @@ class ServerDebugger {
 
   /// Resumes a server waiting at its start without breakpoints, when
   /// Lumide sends none.
-  Future<void> _resumeAtStartAfterWait() async {
-    await Future<void>.delayed(_breakpointWait);
+  Future<void> _resumeAtStartWithoutBreakpoints() async {
     final waitingAtStart = _pauseEvent?.kind == EventKind.kPauseStart;
     if (!_resumeAtStart || !waitingAtStart || _ended) return;
     _resumeAtStart = false;
@@ -653,6 +694,17 @@ class ServerDebugger {
       _installed[key] = _InstalledBreakpoint(installed.requested, breakpoint);
       return;
     }
+  }
+
+  /// Sends the breakpoints once for a burst of changes, such as the VM
+  /// resolving each breakpoint of a sync.
+  void _schedulePush() {
+    if (_pushScheduled) return;
+    _pushScheduled = true;
+    Timer.run(() {
+      _pushScheduled = false;
+      unawaited(_pushBreakpoints());
+    });
   }
 
   Future<void> _pushBreakpoints() async {

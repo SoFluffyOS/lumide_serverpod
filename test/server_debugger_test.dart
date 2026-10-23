@@ -107,6 +107,61 @@ void main() {
     expect(debug.reason, 'breakpoint');
   });
 
+  test('installs a breakpoint once when Lumide sends it twice at once',
+      () async {
+    await debugger.attach('ws://vm');
+    const breakpoints = [
+      LumideDebugBreakpoint(sourceUri: _fileUri, line: 12),
+    ];
+    await Future.wait([
+      debugger.setBreakpoints(breakpoints),
+      debugger.setBreakpoints(breakpoints),
+    ]);
+    await settle();
+
+    expect(vms.single.breakpointUris, [_packageUri]);
+  });
+
+  test('lets go of a server that stopped answering', () async {
+    final releasing = ServerDebugger(
+      context: _FakeContext(debug),
+      sessionId: 'session',
+      name: 'app_server',
+      serverRoot: '/app/app_server',
+      output: output,
+      logService: LogService((_) {}),
+      releaseTimeout: const Duration(milliseconds: 50),
+      connect: (_) async {
+        final vm = _FakeVm();
+        vms.add(vm);
+        return vm.service;
+      },
+    );
+    addTearDown(releasing.end);
+    await releasing.attach('ws://vm');
+    await settle();
+    vms.single.unresponsive = true;
+
+    await releasing.release().timeout(const Duration(seconds: 1));
+  });
+
+  test('keeps debugging the main isolate when another one pauses', () async {
+    await debugger.attach('ws://vm');
+    await debugger.setBreakpoints(
+      const [LumideDebugBreakpoint(sourceUri: _fileUri, line: 12)],
+    );
+    await settle();
+
+    vms.single.pauseOtherIsolate();
+    await settle();
+    vms.single.pauseOnBreakpoint();
+    await settle();
+
+    expect(debug.states.last, LumideDebugSessionState.paused);
+    expect(debug.reason, 'breakpoint');
+    expect(vms.single.breakpointUris, [_packageUri]);
+  });
+
   test('a server waiting at its start resumes once breakpoints are in',
       () async {
     final waiting = ServerDebugger(
@@ -159,6 +214,9 @@ class _FakeVm {
   int get resumes => resumedIsolates.length;
   bool conditionResult = true;
 
+  /// When set, the VM stops answering requests, like a wedged server.
+  bool unresponsive = false;
+
   Future<void> close() async {
     await service.dispose();
     await _incoming.close();
@@ -176,6 +234,7 @@ class _FakeVm {
   }
 
   void _handle(String message) {
+    if (unresponsive) return;
     final request = jsonDecode(message) as Map<String, dynamic>;
     final method = request['method'] as String;
     final params = request['params'] as Map<String, dynamic>? ?? const {};
@@ -236,6 +295,23 @@ class _FakeVm {
     resumedIsolates.add(isolateId);
     return {'type': 'Success'};
   }
+
+  /// Another isolate stopping on an exception.
+  void pauseOtherIsolate() {
+    _event('Debug', {
+      'type': 'Event',
+      'kind': 'PauseException',
+      'timestamp': 0,
+      'isolate': _otherIsolateRef,
+    });
+  }
+
+  static const _otherIsolateRef = {
+    'type': '@Isolate',
+    'id': 'isolates/2',
+    'name': 'worker',
+    'number': '2',
+  };
 
   /// Another isolate the server spawned, waiting at its start.
   void startOtherIsolate() {
