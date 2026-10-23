@@ -1,9 +1,16 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:lumide_api/lumide_api.dart';
 import 'package:lumide_serverpod/lumide_serverpod.dart';
 
-void main() => ServerpodPlugin().run();
+/// Errors nobody awaited would end the plugin process, taking every
+/// Serverpod feature with it, so they are logged instead.
+void main() => runZonedGuarded(
+      () => ServerpodPlugin().run(),
+      (error, stackTrace) =>
+          stderr.writeln('[ERROR] Uncaught: $error\n$stackTrace'),
+    );
 
 class ServerpodPlugin extends LumidePlugin {
   late LumideContext _context;

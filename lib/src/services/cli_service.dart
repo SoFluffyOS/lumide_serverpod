@@ -4,6 +4,7 @@ import 'package:lumide_api/lumide_api.dart';
 import 'package:lumide_serverpod/src/constants.dart';
 import 'package:lumide_serverpod/src/models/models.dart';
 import 'package:lumide_serverpod/src/services/log_service.dart';
+import 'package:lumide_serverpod/src/services/output_writer.dart';
 import 'package:lumide_serverpod/src/services/process_hub.dart';
 
 /// Runs the Serverpod CLI and other tools, with their output in the
@@ -120,8 +121,8 @@ class CliService {
       () => unawaited(process.stop()),
     );
     final forwarding = Future.wait([
-      process.stdout.forEach(output.append),
-      process.stderr.forEach(output.append),
+      process.stdout.forEach((chunk) => appendQuietly(output, chunk)),
+      process.stderr.forEach((chunk) => appendQuietly(output, chunk)),
     ]);
     try {
       final exitCode = await process.exitCode;

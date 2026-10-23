@@ -60,10 +60,9 @@ class GenerateOnSave {
       _rerun.add(serverRoot);
       return;
     }
-    if (!await _shouldGenerate(serverRoot)) return;
-
     _running.add(serverRoot);
     try {
+      if (!await _shouldGenerate(serverRoot)) return;
       do {
         _rerun.remove(serverRoot);
         await _generate(serverRoot);

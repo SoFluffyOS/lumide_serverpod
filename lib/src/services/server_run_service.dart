@@ -6,6 +6,7 @@ import 'package:lumide_serverpod/src/models/models.dart';
 import 'package:lumide_serverpod/src/services/cli_service.dart';
 import 'package:lumide_serverpod/src/services/debug/debug.dart';
 import 'package:lumide_serverpod/src/services/log_service.dart';
+import 'package:lumide_serverpod/src/services/output_writer.dart';
 import 'package:lumide_serverpod/src/services/process_hub.dart';
 import 'package:lumide_serverpod/src/services/project_service.dart';
 import 'package:path/path.dart' as path;
@@ -31,6 +32,12 @@ class ServerRunService {
   void Function()? onDidChange;
 
   final Map<String, _RunningServer> _running = {};
+
+  /// Servers between the launch request and their process starting.
+  final Set<String> _launching = {};
+
+  /// Servers asked to stop while they were still starting.
+  final Set<String> _stopRequested = {};
   final Map<String, Future<LumideOutputChannel>> _channels = {};
   late final DebugSessions _debugSessions = DebugSessions(
     context,
@@ -120,6 +127,7 @@ class ServerRunService {
   }
 
   Future<void> stop([Map<String, dynamic>? args]) async {
+    _stopRequested.addAll(_launching);
     if (_running.isEmpty) {
       await context.window.showMessage(
         'No Serverpod server is running.',
@@ -179,6 +187,9 @@ class ServerRunService {
     final configuration = request.configuration;
     if (request.actionId == 'stop' && configuration != null) {
       final serverRoot = await _serverRootFor(configuration);
+      if (serverRoot != null && _launching.contains(serverRoot)) {
+        _stopRequested.add(serverRoot);
+      }
       if (_running[serverRoot] case final running?) await _stop(running);
     }
     return configuration;
@@ -199,27 +210,45 @@ class ServerRunService {
       await _endLaunch(event, message: 'No Serverpod server to start.');
       return;
     }
-    if (_running.containsKey(server.root)) {
-      await context.window.showMessage(
-        '${server.name} is already running.',
-        title: pluginName,
-      );
-      await _endLaunch(event, message: '${server.name} is already running.');
-      return;
-    }
-
-    final debug = request.kind == LumideLaunchKind.debug;
-    final debugged = _debugSessions.active;
-    if (debug && debugged != null) {
-      final message = 'Stop debugging ${debugged.name} before debugging '
-          '${server.name}.';
+    final root = server.root;
+    if (_running.containsKey(root) || _launching.contains(root)) {
+      final message = '${server.name} is already running.';
       await context.window.showMessage(message, title: pluginName);
       await _endLaunch(event, message: message);
       return;
     }
 
+    final debug = request.kind == LumideLaunchKind.debug;
+    if (debug && !_debugSessions.reserve()) {
+      final debugged = _debugSessions.active?.name ?? 'the other server';
+      final message =
+          'Stop debugging $debugged before debugging ${server.name}.';
+      await context.window.showMessage(message, title: pluginName);
+      await _endLaunch(event, message: message);
+      return;
+    }
+
+    // Held from here, before any await, so a second launch of the same
+    // server is turned away instead of starting another process.
+    _launching.add(root);
+    _stopRequested.remove(root);
+    try {
+      await _startServer(server, request, event, debug: debug);
+    } finally {
+      _launching.remove(root);
+      _stopRequested.remove(root);
+      if (debug) _debugSessions.cancelReservation();
+    }
+  }
+
+  Future<void> _startServer(
+    ServerPackage server,
+    LumideLaunchRequest request,
+    LumideLaunchEvent event, {
+    required bool debug,
+  }) async {
     final options = ServerLaunchOptions.fromConfig(
-      configuration.arguments,
+      request.configuration.arguments,
       defaults: await _defaultOptions(server),
     );
     final version = await cliService.version();
@@ -236,6 +265,10 @@ class ServerRunService {
         'The Serverpod CLI was not found, so the server starts with dart. '
         'Start its database first, such as with "docker compose up -d".',
       );
+    }
+    if (_stopRequested.contains(server.root)) {
+      await _endLaunch(event, message: '${server.name} was stopped.');
+      return;
     }
 
     final HostProcess process;
@@ -278,20 +311,40 @@ class ServerRunService {
       debugger: debugger,
     );
     _running[server.root] = running;
-    if (debugger != null && _debugSessions.open(debugger)) {
-      await debugger.start();
-    }
-    await context.launch.didStart(event);
-    onDidChange?.call();
+    if (debugger != null) _debugSessions.open(debugger);
 
-    final announcement = switch (usesStart) {
-      true => VmServiceAnnouncement.serverpodProxy,
-      false => VmServiceAnnouncement.dartVm,
-    };
+    // Output is read from the start, whatever happens below, so the
+    // process never buffers it unread.
+    final forwarding = _forwardOutput(
+      process,
+      output,
+      debugger: debugger,
+      announcement: switch (usesStart) {
+        true => VmServiceAnnouncement.serverpodProxy,
+        false => VmServiceAnnouncement.dartVm,
+      },
+    );
+    try {
+      await debugger?.start();
+      await context.launch.didStart(event);
+    } catch (error) {
+      logService.warn('Could not report the start of ${server.name}: $error');
+    }
+    onDidChange?.call();
+    unawaited(_watchExit(running, output, forwarding));
+    if (_stopRequested.contains(server.root)) await _stop(running);
+  }
+
+  Future<void> _forwardOutput(
+    HostProcess process,
+    LumideOutputChannel output, {
+    required ServerDebugger? debugger,
+    required VmServiceAnnouncement announcement,
+  }) {
     final lines = LineBuffer();
-    final forwarding = Future.wait([
+    return Future.wait([
       process.stdout.forEach((chunk) {
-        unawaited(output.append(chunk));
+        appendQuietly(output, chunk);
         if (debugger == null || debugger.isAttached) return;
         for (final line in lines.add(chunk)) {
           if (announcement.webSocketUriIn(line) case final uri?) {
@@ -300,29 +353,35 @@ class ServerRunService {
           }
         }
       }),
-      process.stderr.forEach(output.append),
+      process.stderr.forEach((chunk) => appendQuietly(output, chunk)),
     ]);
-    unawaited(_watchExit(running, output, forwarding));
   }
 
+  /// Reports the end of [running] once its process exits, whatever fails
+  /// on the way, so Lumide and the debugger never wait on a gone server.
   Future<void> _watchExit(
     _RunningServer running,
     LumideOutputChannel output,
     Future<void> forwarding,
   ) async {
     final exitCode = await running.process.exitCode;
-    await forwarding;
-    if (identical(_running[running.server.root], running)) {
-      _running.remove(running.server.root);
+    try {
+      await forwarding;
+      await output.appendLine('${running.server.name} stopped '
+          '(exit code $exitCode).');
+    } catch (error) {
+      logService.warn('Could not finish the output: $error');
+    } finally {
+      if (identical(_running[running.server.root], running)) {
+        _running.remove(running.server.root);
+      }
+      if (running.debugger case final debugger?) {
+        _debugSessions.close(debugger);
+        await debugger.end(message: '${running.server.name} stopped.');
+      }
+      await _endLaunch(running.event, exitCode: exitCode);
+      onDidChange?.call();
     }
-    await output.appendLine('${running.server.name} stopped '
-        '(exit code $exitCode).');
-    if (running.debugger case final debugger?) {
-      await debugger.end(message: '${running.server.name} stopped.');
-      _debugSessions.close(debugger);
-    }
-    await _endLaunch(running.event, exitCode: exitCode);
-    onDidChange?.call();
   }
 
   /// Stops [running], first letting go of it in the debugger, so a server

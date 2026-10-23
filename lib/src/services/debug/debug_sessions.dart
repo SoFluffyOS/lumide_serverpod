@@ -21,8 +21,20 @@ class DebugSessions {
   final Future<void> Function(ServerDebugger debugger) onStop;
 
   ServerDebugger? _active;
+  bool _reserved = false;
 
   ServerDebugger? get active => _active;
+
+  /// Holds the session for a server about to start in the debugger; false
+  /// when another server is being debugged or about to be.
+  bool reserve() {
+    if (_active != null || _reserved) return false;
+    _reserved = true;
+    return true;
+  }
+
+  /// Gives up a reservation that did not lead to [open].
+  void cancelReservation() => _reserved = false;
 
   void init() {
     context.debug
@@ -57,12 +69,10 @@ class DebugSessions {
       );
   }
 
-  /// Makes [debugger] the active session; false when another server is
-  /// being debugged.
-  bool open(ServerDebugger debugger) {
-    if (_active != null) return false;
+  /// Makes [debugger] the active session, taking over the reservation.
+  void open(ServerDebugger debugger) {
+    _reserved = false;
     _active = debugger;
-    return true;
   }
 
   void close(ServerDebugger debugger) {
