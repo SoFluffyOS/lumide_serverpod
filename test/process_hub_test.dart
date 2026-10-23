@@ -91,8 +91,12 @@ void main() {
       ]);
     });
 
-    test('kills the process tree when it keeps running', () async {
-      shell.nextPid = 7;
+    test('kills the whole process tree, leaves first, when it keeps running',
+        () async {
+      shell
+        ..nextPid = 7
+        ..children[7] = [8]
+        ..children[8] = [9, 10];
       final process = await hub.spawn('serverpod', ['start']);
 
       await process.stop(escalateAfter: escalateAfter, timeout: timeout);
@@ -103,7 +107,11 @@ void main() {
       ]);
       expect(shell.commands, [
         ['pkill', '-INT', '-P', '7'],
-        ['pkill', '-KILL', '-P', '7'],
+        ['pgrep', '-P', '7'],
+        ['pgrep', '-P', '8'],
+        ['pgrep', '-P', '9'],
+        ['pgrep', '-P', '10'],
+        ['kill', '-KILL', '10', '9', '8'],
       ]);
     });
 
@@ -134,6 +142,9 @@ class _FakeShell implements LumideShell {
   void Function(List<String> command)? onRun;
   final signals = <LumideProcessSignal?>[];
   final commands = <List<String>>[];
+
+  /// Child pids by parent, as `pgrep -P` prints them.
+  final children = <int, List<int>>{};
   final _stdout = <void Function(int, String)>[];
   final _stderr = <void Function(int, String)>[];
   final _exit = <void Function(int, int)>[];
@@ -185,6 +196,10 @@ class _FakeShell implements LumideShell {
     final commandLine = [command, ...arguments];
     commands.add(commandLine);
     onRun?.call(commandLine);
+    if (commandLine case ['pgrep', '-P', final parent]) {
+      final pids = children[int.parse(parent)] ?? const [];
+      return ProcessResult(exitCode: 0, stdout: pids.join('\n'), stderr: '');
+    }
     return const ProcessResult(exitCode: 0, stdout: '', stderr: '');
   }
 

@@ -18,6 +18,8 @@ permissions:
       - dart
       - docker
       - pkill
+      - pgrep
+      - kill
       - taskkill
 
 configuration:

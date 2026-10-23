@@ -144,8 +144,10 @@ class HostProcess {
   /// Launcher scripts, such as the `serverpod` script pub installs, do not
   /// pass signals on to the program they start, so when the process is
   /// still running after [escalateAfter], its child processes are
-  /// interrupted too. Windows has no interrupt signal, so there the whole
-  /// process tree ends at once.
+  /// interrupted too. After [timeout] the whole process tree is killed:
+  /// the server and its database run below the launcher, and would
+  /// otherwise keep their ports. Windows has no interrupt signal, so there
+  /// the whole process tree ends at once.
   Future<void> stop({
     Duration escalateAfter = const Duration(seconds: 3),
     Duration timeout = const Duration(seconds: 15),
@@ -160,8 +162,46 @@ class HostProcess {
     if (await _exitsWithin(escalateAfter)) return;
     await _runQuietly('pkill', ['-INT', '-P', '$pid']);
     if (await _exitsWithin(timeout - escalateAfter)) return;
-    await _runQuietly('pkill', ['-KILL', '-P', '$pid']);
+
+    // Collected before anything dies: an orphaned process moves to a new
+    // parent and is no longer found below this one.
+    final descendants = await _descendants();
+    if (descendants.isNotEmpty) {
+      await _runIgnoringErrors('kill', [
+        '-KILL',
+        for (final descendant in descendants.reversed) '$descendant',
+      ]);
+    }
     await kill(LumideProcessSignal.kill);
+  }
+
+  static const _maxDescendants = 256;
+
+  /// The processes below this one, level by level from its children down.
+  Future<List<int>> _descendants() async {
+    final found = <int>[];
+    var level = [pid];
+    while (level.isNotEmpty && found.length < _maxDescendants) {
+      final next = <int>[];
+      for (final parent in level) {
+        next.addAll(await _childrenOf(parent));
+      }
+      found.addAll(next);
+      level = next;
+    }
+    return found;
+  }
+
+  Future<List<int>> _childrenOf(int parent) async {
+    try {
+      final result = await _shell.run('pgrep', ['-P', '$parent']);
+      return [
+        for (final line in result.stdout.split('\n'))
+          if (int.tryParse(line.trim()) case final child?) child,
+      ];
+    } catch (_) {
+      return const [];
+    }
   }
 
   Future<bool> _exitsWithin(Duration duration) async {
@@ -175,6 +215,13 @@ class HostProcess {
 
   Future<void> _runQuietly(String executable, List<String> arguments) async {
     if (hasExited) return;
+    await _runIgnoringErrors(executable, arguments);
+  }
+
+  Future<void> _runIgnoringErrors(
+    String executable,
+    List<String> arguments,
+  ) async {
     try {
       await _shell.run(executable, arguments);
     } catch (_) {
