@@ -56,3 +56,7 @@ const String iconContainer = 'container';
 const String iconFolderPlus = 'folder-plus';
 const String iconUpgrade = 'circle-arrow-up';
 const String iconServer = 'server';
+
+// assets
+const String assetIconServerpod = 'assets/icon_serverpod.svg';
+const String assetIconServerpodSolid = 'assets/icon_serverpod_solid.svg';

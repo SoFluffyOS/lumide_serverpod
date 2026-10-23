@@ -163,7 +163,7 @@ class ServerpodPlugin extends LumidePlugin {
       id: languageServerServerpod,
       languageId: 'yaml',
       displayName: pluginName,
-      icon: iconServer,
+      iconPath: assetIconServerpodSolid,
       fileExtensions: modelFileExtensions,
       extensionLanguageMap: const {'.spy': 'yaml'},
       command: executableServerpod,

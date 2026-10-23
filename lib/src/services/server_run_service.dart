@@ -58,6 +58,7 @@ class ServerRunService {
       kinds: const [LumideLaunchKind.run],
       defaultKinds: const [LumideLaunchKind.run],
       icon: iconServer,
+      iconPath: assetIconServerpodSolid,
       configurationSchema: 'schemas/launch.schema.json',
       configurationSnippets: const [
         {
@@ -291,7 +292,8 @@ class ServerRunService {
       label: server.name,
       description: pluginName,
       kinds: const [LumideLaunchKind.run],
-      icon: iconServer,
+      iconPath: assetIconServerpod,
+      noTint: true,
       arguments: {'server': server.root},
       workspaceFolder: await _workspaceFolderOf(server),
     );

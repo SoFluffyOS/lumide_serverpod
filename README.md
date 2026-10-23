@@ -77,6 +77,8 @@ To change how a server starts, add an entry to `.sofluffy/lumide/launch.json`:
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
+The Serverpod logo in `assets/` is Serverpod's, from the [Serverpod repository](https://github.com/serverpod/serverpod/tree/main/misc/logo), and identifies Serverpod in Lumide.
+
 ---
 
 Built with ❤️ by [SoFluffy](https://sofluffy.io).
