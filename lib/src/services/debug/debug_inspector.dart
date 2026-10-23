@@ -15,6 +15,9 @@ class DebugInspector {
   /// Frame ids double as scope ids; variable references start above them.
   static const _firstVariableReference = 1 << 20;
 
+  /// How many elements of a list, map or set load at a time.
+  static const pageSize = 100;
+
   void clear() {
     _framesById.clear();
     _references.clear();
@@ -27,7 +30,9 @@ class DebugInspector {
   ) async {
     final stack = await service.getStack(isolateId);
     final frames = stack.frames ?? const <Frame>[];
-    clear();
+    // Variable references stay: Lumide may load the stack again while the
+    // user has variables expanded. They go when the isolate resumes.
+    _framesById.clear();
 
     final fileUris = await _fileUris(service, isolateId, [
       for (final frame in frames)
@@ -128,17 +133,20 @@ class DebugInspector {
     }
   }
 
-  /// [value] as text, with long strings fetched in full.
+  /// [value] as text. Long strings are fetched in full when [full] is set,
+  /// and otherwise end in an ellipsis.
   Future<String> describe(
     VmService service,
     String isolateId,
-    Object? value,
-  ) async {
+    Object? value, {
+    bool full = true,
+  }) async {
     return switch (value) {
       null => 'null',
       InstanceRef(kind: InstanceKind.kNull) => 'null',
-      InstanceRef(valueAsStringIsTruncated: true, :final id?) =>
+      InstanceRef(valueAsStringIsTruncated: true, :final id?) when full =>
         await _fullString(service, isolateId, id) ?? '${value.valueAsString}…',
+      InstanceRef(valueAsStringIsTruncated: true) => '${value.valueAsString}…',
       InstanceRef(:final valueAsString?) => switch (value.kind) {
           InstanceKind.kString => '"$valueAsString"',
           _ => valueAsString,
@@ -153,6 +161,8 @@ class DebugInspector {
     };
   }
 
+  /// The fields of an object, or one page of a collection's elements with
+  /// an entry for the next page.
   Future<List<LumideDebugVariable>> _children(
     VmService service,
     String isolateId,
@@ -160,31 +170,47 @@ class DebugInspector {
   ) async {
     final id = entry.instance.id;
     if (id == null) return const [];
-    final object = await service.getObject(isolateId, id);
+    final paged = _isCollection(entry.instance);
+    final offset = entry.offset;
+    final object = await service.getObject(
+      isolateId,
+      id,
+      offset: switch (paged) {
+        true => offset,
+        false => null,
+      },
+      count: switch (paged) {
+        true => pageSize,
+        false => null,
+      },
+    );
     if (object is! Instance) return const [];
     final parent = entry.evaluateName;
 
-    return [
-      for (final field in object.fields ?? const <BoundField>[])
-        await _variable(
-          service,
-          isolateId,
-          name: '${field.name ?? field.decl?.name ?? '<field>'}',
-          value: field.value,
-          evaluateName: switch ((parent, field.name)) {
-            (final parent?, final String name) when _isIdentifier(name) =>
-              '$parent.$name',
-            _ => null,
-          },
-        ),
+    final children = [
+      if (offset == 0)
+        for (final field in object.fields ?? const <BoundField>[])
+          await _variable(
+            service,
+            isolateId,
+            full: false,
+            name: '${field.name ?? field.decl?.name ?? '<field>'}',
+            value: field.value,
+            evaluateName: switch ((parent, field.name)) {
+              (final parent?, final String name) when _isIdentifier(name) =>
+                '$parent.$name',
+              _ => null,
+            },
+          ),
       for (final (index, element) in (object.elements ?? const []).indexed)
         await _variable(
           service,
           isolateId,
-          name: '[$index]',
+          full: false,
+          name: '[${offset + index}]',
           value: element,
           evaluateName: switch (parent) {
-            final parent? => '$parent[$index]',
+            final parent? => '$parent[${offset + index}]',
             null => null,
           },
         ),
@@ -192,9 +218,29 @@ class DebugInspector {
         await _variable(
           service,
           isolateId,
-          name: '[${await describe(service, isolateId, association.key)}]',
+          full: false,
+          name:
+              '[${await describe(service, isolateId, association.key, full: false)}]',
           value: association.value,
         ),
+    ];
+
+    final length = object.length ?? entry.instance.length;
+    final nextOffset = offset + pageSize;
+    if (!paged || length == null || nextOffset >= length) return children;
+    final reference = _nextReference++;
+    _references[reference] = _VariableReference(
+      entry.instance,
+      parent,
+      offset: nextOffset,
+    );
+    return [
+      ...children,
+      LumideDebugVariable(
+        name: '[$nextOffset…${length - 1}]',
+        value: '${length - nextOffset} more',
+        variablesReference: reference,
+      ),
     ];
   }
 
@@ -204,10 +250,11 @@ class DebugInspector {
     required String name,
     required Object? value,
     String? evaluateName,
+    bool full = true,
   }) async {
     return LumideDebugVariable(
       name: name,
-      value: await describe(service, isolateId, value),
+      value: await describe(service, isolateId, value, full: full),
       type: switch (value) {
         InstanceRef(:final classRef?) => classRef.name,
         Sentinel(:final kind?) => kind,
@@ -288,8 +335,11 @@ class DebugInspector {
 }
 
 class _VariableReference {
-  const _VariableReference(this.instance, this.evaluateName);
+  const _VariableReference(this.instance, this.evaluateName, {this.offset = 0});
 
   final InstanceRef instance;
   final String? evaluateName;
+
+  /// The first element to load, for later pages of a collection.
+  final int offset;
 }
