@@ -210,6 +210,7 @@ class ServerpodPlugin extends LumidePlugin {
   }
 
   void _handleFileChanges(LumideFileChangeEvent event) {
+    event.changes.forEach(generateOnSave.handleFileChange);
     final pubspecChanged = event.changes.any(
       (change) => change.uri.endsWith('pubspec.yaml'),
     );
