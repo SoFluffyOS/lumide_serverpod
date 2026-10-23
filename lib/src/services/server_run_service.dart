@@ -7,6 +7,7 @@ import 'package:lumide_serverpod/src/services/cli_service.dart';
 import 'package:lumide_serverpod/src/services/debug/debug.dart';
 import 'package:lumide_serverpod/src/services/log_service.dart';
 import 'package:lumide_serverpod/src/services/output_writer.dart';
+import 'package:lumide_serverpod/src/services/plugin_files.dart';
 import 'package:lumide_serverpod/src/services/process_hub.dart';
 import 'package:lumide_serverpod/src/services/project_service.dart';
 import 'package:path/path.dart' as path;
@@ -51,6 +52,10 @@ class ServerRunService {
   );
 
   static const _stopTimeout = Duration(seconds: 15);
+
+  /// The supervisor's own stop, interrupt to kill, takes up to 15 seconds.
+  static const _supervisedStopTimeout = Duration(seconds: 17);
+  Future<String?>? _supervisorScript;
 
   /// Names of the servers running now.
   List<String> get runningServers => [
@@ -277,11 +282,18 @@ class ServerRunService {
       return;
     }
 
+    final supervisor = await _supervisor();
     final HostProcess process;
     try {
       process = await processHub.spawn(
-        command.executable,
-        command.arguments,
+        switch (supervisor) {
+          null => command.executable,
+          _ => executableDart,
+        },
+        [
+          if (supervisor != null) ...[supervisor, command.executable],
+          ...command.arguments,
+        ],
         workingDirectory: server.root,
       );
     } catch (error) {
@@ -314,6 +326,7 @@ class ServerRunService {
       event: event,
       options: options,
       usesStart: usesStart,
+      supervised: supervisor != null,
       debugger: debugger,
     );
     _running[server.root] = running;
@@ -393,9 +406,35 @@ class ServerRunService {
 
   /// Stops [running], first letting go of it in the debugger, so a server
   /// paused on a breakpoint can shut down.
+  ///
+  /// A supervised server stops itself, escalating as needed; the process
+  /// tree is only killed from here when the supervisor does not finish.
   Future<void> _stop(_RunningServer running) async {
     await running.debugger?.release();
-    await running.process.stop(timeout: _stopTimeout);
+    await running.process.stop(
+      escalateAfter: switch (running.supervised) {
+        true => _supervisedStopTimeout,
+        false => const Duration(seconds: 3),
+      },
+      timeout: switch (running.supervised) {
+        true => _supervisedStopTimeout + const Duration(seconds: 5),
+        false => _stopTimeout,
+      },
+    );
+  }
+
+  /// The script servers run under, which stops them when Lumide goes
+  /// away however it ends; null to run them directly when it is missing.
+  Future<String?> _supervisor() async {
+    final script = _supervisorScript ??= pluginFile(scriptSupervise);
+    final found = await script;
+    if (found == null) {
+      logService.warn(
+        'Cannot find $scriptSupervise; servers keep running if Lumide '
+        'quits without stopping them.',
+      );
+    }
+    return found;
   }
 
   Future<void> _endLaunch(
@@ -521,6 +560,7 @@ class _RunningServer {
     required this.event,
     required this.options,
     required this.usesStart,
+    required this.supervised,
     this.debugger,
   });
 
@@ -531,6 +571,9 @@ class _RunningServer {
 
   /// Whether the server runs with `serverpod start`.
   final bool usesStart;
+
+  /// Whether the server runs under the plugin's supervisor script.
+  final bool supervised;
 
   /// The debugger, when the server was started for debugging.
   final ServerDebugger? debugger;

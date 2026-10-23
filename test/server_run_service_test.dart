@@ -106,4 +106,13 @@ void main() {
 
     expect(host.statusBar.items, isEmpty);
   });
+
+  test('runs servers under the supervisor', () async {
+    await runService.start();
+
+    final [executable, script, ...arguments] = host.shell.spawned.single;
+    expect(executable, 'dart');
+    expect(script, endsWith('bin/supervise.dart'));
+    expect(arguments.take(2), ['serverpod', 'start']);
+  });
 }

@@ -3,6 +3,7 @@ export 'debug/debug.dart';
 export 'generate_on_save.dart';
 export 'log_service.dart';
 export 'output_writer.dart';
+export 'plugin_files.dart';
 export 'process_hub.dart';
 export 'project_service.dart';
 export 'server_run_service.dart';

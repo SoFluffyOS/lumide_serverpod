@@ -1,10 +1,7 @@
-import 'dart:io';
-import 'dart:isolate';
-
 import 'package:lumide_api/lumide_api.dart';
 import 'package:lumide_serverpod/src/constants.dart';
 import 'package:lumide_serverpod/src/models/models.dart';
-import 'package:path/path.dart' as path;
+import 'package:lumide_serverpod/src/services/plugin_files.dart';
 
 /// The Serverpod item in the status bar: the CLI version, the servers
 /// running, and the tools menu on click.
@@ -36,7 +33,7 @@ class StatusBarService {
         tooltip: tooltip,
         command: cmdServerpodTools,
         iconName: iconServer,
-        iconPath: await _logoPath(),
+        iconPath: await pluginFile(assetIconServerpodSolid),
         alignment: 'right',
         priority: 97,
       );
@@ -48,34 +45,6 @@ class StatusBarService {
       tooltip: tooltip,
       command: cmdServerpodTools,
     );
-  }
-
-  /// The absolute path of the Serverpod logo; the status bar does not
-  /// resolve paths relative to the plugin.
-  static Future<String?> _logoPath() async {
-    final candidates = <String>[];
-    try {
-      final library = await Isolate.resolvePackageUri(
-        Uri.parse('package:lumide_serverpod/lumide_serverpod.dart'),
-      );
-      if (library != null && library.isScheme('file')) {
-        final packageRoot = path.dirname(path.dirname(library.toFilePath()));
-        candidates.add(path.join(packageRoot, assetIconServerpodSolid));
-      }
-    } catch (_) {
-      // Running from a snapshot without a package config.
-    }
-    final scriptDirectory = path.dirname(Platform.script.toFilePath());
-    candidates.addAll([
-      path.join(scriptDirectory, '..', assetIconServerpodSolid),
-      path.join(Directory.current.path, assetIconServerpodSolid),
-    ]);
-
-    for (final candidate in candidates) {
-      final normalized = path.normalize(candidate);
-      if (await File(normalized).exists()) return normalized;
-    }
-    return null;
   }
 
   Future<void> dispose() async {

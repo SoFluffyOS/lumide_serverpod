@@ -48,7 +48,7 @@ Commands act on the server of the file you right-clicked or have open, or ask wh
 
 ## Running servers
 
-Each server package shows in the Run controls. Serverpod 4 servers start with `serverpod start`, which generates code, starts the database, and reloads the server when files change. Server logs go to a **Serverpod Server** output channel per server.
+Each server package shows in the Run controls. Serverpod 4 servers start with `serverpod start`, which generates code, starts the database, and reloads the server when files change. Server logs go to a **Serverpod Server** output channel per server. Servers stop when Lumide quits, even when it crashes or is force quit.
 
 To change how a server starts, add an entry to `.sofluffy/lumide/launch.json`:
 

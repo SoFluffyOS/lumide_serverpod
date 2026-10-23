@@ -59,6 +59,9 @@ const String iconUpgrade = 'circle-arrow-up';
 const String iconServer = 'server';
 const String iconBug = 'bug';
 
+// plugin files
+const String scriptSupervise = 'bin/supervise.dart';
+
 // assets
 const String assetIconServerpod = 'assets/icon_serverpod.svg';
 const String assetIconServerpodSolid = 'assets/icon_serverpod_solid.svg';
