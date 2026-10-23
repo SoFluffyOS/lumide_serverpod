@@ -111,6 +111,9 @@ class FakeWindow implements LumideWindow {
   final messages = <String>[];
   final channels = <FakeOutput>[];
 
+  /// How many output channels fail to open before they work.
+  int failingChannels = 0;
+
   @override
   Future<void> showMessage(
     String message, {
@@ -124,6 +127,10 @@ class FakeWindow implements LumideWindow {
     String name, {
     int? maxEntries,
   }) async {
+    if (failingChannels > 0) {
+      failingChannels--;
+      throw StateError('No output panel');
+    }
     final channel = FakeOutput(name);
     channels.add(channel);
     return channel;

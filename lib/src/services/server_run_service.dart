@@ -496,9 +496,12 @@ class ServerRunService {
   }
 
   Future<LumideOutputChannel> _channelFor(ServerPackage server) {
-    return _channels[server.root] ??= context.window.createOutputChannel(
-      '$channelServerpodServer: ${server.name}',
-    );
+    return _channels[server.root] ??= context.window
+        .createOutputChannel('$channelServerpodServer: ${server.name}')
+        .catchError((Object error) {
+      _channels.remove(server.root);
+      throw error;
+    });
   }
 
   static const _kinds = [LumideLaunchKind.run, LumideLaunchKind.debug];

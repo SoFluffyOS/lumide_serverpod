@@ -10,18 +10,35 @@ import 'package:lumide_serverpod/src/services/process_hub.dart';
 /// Runs the Serverpod CLI and other tools, with their output in the
 /// Serverpod output channel.
 class CliService {
-  CliService(this.context, this.processHub, this.logService);
+  CliService(
+    this.context,
+    this.processHub,
+    this.logService, {
+    this.missingCliRecheck = const Duration(seconds: 30),
+  });
 
   final LumideContext context;
   final ProcessHub processHub;
   final LogService logService;
 
+  /// How long a missing CLI is remembered before looking again, so
+  /// installing it takes effect without restarting.
+  final Duration missingCliRecheck;
+
+  /// Called when the CLI is found, upgraded, or goes missing.
+  void Function(ServerpodVersion? version)? onDidChangeVersion;
+
   Future<ServerpodVersion?>? _version;
+  ServerpodVersion? _lastVersion;
+  DateTime? _missingSince;
   Future<LumideOutputChannel>? _channel;
 
   /// The installed CLI's version, or null when it is not installed.
   Future<ServerpodVersion?> version({bool refresh = false}) {
-    if (refresh) _version = null;
+    final missingSince = _missingSince;
+    final recheckMissing = missingSince != null &&
+        DateTime.now().difference(missingSince) >= missingCliRecheck;
+    if (refresh || recheckMissing) _version = null;
     return _version ??= _lookUpVersion();
   }
 
@@ -45,8 +62,14 @@ class CliService {
     );
   }
 
-  Future<LumideOutputChannel> channel() =>
-      _channel ??= context.window.createOutputChannel(channelServerpod);
+  Future<LumideOutputChannel> channel() {
+    return _channel ??= context.window
+        .createOutputChannel(channelServerpod)
+        .catchError((Object error) {
+      _channel = null;
+      throw error;
+    });
+  }
 
   /// Runs [executable] in [workingDirectory] with cancellable progress
   /// titled [title], and reports a failure. Returns whether it succeeded.
@@ -135,6 +158,19 @@ class CliService {
   }
 
   Future<ServerpodVersion?> _lookUpVersion() async {
+    final version = await _readVersion();
+    _missingSince = switch (version) {
+      null => DateTime.now(),
+      _ => null,
+    };
+    if ('$version' != '$_lastVersion') {
+      _lastVersion = version;
+      onDidChangeVersion?.call(version);
+    }
+    return version;
+  }
+
+  Future<ServerpodVersion?> _readVersion() async {
     try {
       final result =
           await context.shell.run(executableServerpod, const ['version']);

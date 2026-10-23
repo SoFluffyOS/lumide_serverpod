@@ -26,6 +26,7 @@ class ServerpodPlugin extends LumidePlugin {
   final List<LumideDisposable> _listeners = [];
   bool _initialized = false;
   bool _serverFeaturesActive = false;
+  bool _languageServerRegistered = false;
   Future<void>? _refreshing;
   bool _refreshAgain = false;
 
@@ -61,6 +62,10 @@ class ServerpodPlugin extends LumidePlugin {
     await _registerCommands(context);
     await projectService.refresh();
     runService.onDidChange = () => unawaited(_updateStatusBar());
+    cliService.onDidChangeVersion = (_) {
+      unawaited(_updateStatusBar());
+      unawaited(_registerLanguageServer());
+    };
     await runService.init();
 
     _listeners.addAll([
@@ -155,7 +160,10 @@ class ServerpodPlugin extends LumidePlugin {
     ]);
   }
 
+  /// Registers the model language server once the workspace has a server
+  /// and the CLI is installed, whichever comes last.
   Future<void> _registerLanguageServer() async {
+    if (!_serverFeaturesActive || _languageServerRegistered) return;
     final enabled = await _context.workspace
             .getConfiguration(confLanguageServer) as bool? ??
         defaultLanguageServer;
@@ -167,6 +175,8 @@ class ServerpodPlugin extends LumidePlugin {
       );
       return;
     }
+    if (_languageServerRegistered) return;
+    _languageServerRegistered = true;
     await _context.languages.registerLanguageServer(
       id: languageServerServerpod,
       languageId: 'yaml',
