@@ -89,4 +89,33 @@ dependencies:
       expect(filePathOf(''), isNull);
     });
   });
+
+  group('isIgnoredPubspec', () {
+    final folder = path.join(path.current, 'build', 'work', 'app');
+
+    test('scans a workspace that lives under a build folder', () {
+      expect(
+        ProjectService.isIgnoredPubspec(
+          path.join(folder, 'app_server', 'pubspec.yaml'),
+          [folder],
+        ),
+        isFalse,
+      );
+    });
+
+    test('skips build output and tool caches inside the workspace', () {
+      for (final segments in [
+        ['app_flutter', 'build', 'web', 'pubspec.yaml'],
+        ['app_server', '.dart_tool', 'x', 'pubspec.yaml'],
+      ]) {
+        expect(
+          ProjectService.isIgnoredPubspec(
+            path.joinAll([folder, ...segments]),
+            [folder],
+          ),
+          isTrue,
+        );
+      }
+    });
+  });
 }

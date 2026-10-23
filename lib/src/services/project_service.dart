@@ -18,20 +18,21 @@ class ProjectService {
   Future<List<ServerPackage>> refresh() async {
     final generation = ++_generation;
     final pubspecs = await context.workspace.findFiles('**/pubspec.yaml');
+    final folders = await _workspaceFolderPaths();
+    final pubspecPaths = [
+      for (final pubspec in pubspecs)
+        if (filePathOf(pubspec) case final pubspecPath?
+            when !isIgnoredPubspec(pubspecPath, folders))
+          pubspecPath,
+    ];
+
     final servers = <ServerPackage>[];
-    for (final pubspec in pubspecs) {
-      final pubspecPath = filePathOf(pubspec);
-      if (pubspecPath == null || _isIgnored(pubspecPath)) continue;
-      final String text;
-      try {
-        text = await context.fs.readString(pubspecPath);
-      } catch (_) {
-        continue;
-      }
-      if (ServerPackage.parse(path.dirname(pubspecPath), text)
-          case final server?) {
-        servers.add(server);
-      }
+    for (var start = 0; start < pubspecPaths.length; start += _readBatch) {
+      final batch = pubspecPaths.skip(start).take(_readBatch);
+      servers.addAll([
+        for (final server in await Future.wait(batch.map(_readServer)))
+          if (server != null) server,
+      ]);
     }
     servers.sort((first, second) => first.root.compareTo(second.root));
     if (generation == _generation) _servers = servers;
@@ -154,12 +155,44 @@ class ProjectService {
     return null;
   }
 
-  static bool _isIgnored(String filePath) {
-    final segments = path.split(filePath);
-    return segments.any(_ignoredSegments.contains);
+  Future<ServerPackage?> _readServer(String pubspecPath) async {
+    try {
+      final text = await context.fs.readString(pubspecPath);
+      return ServerPackage.parse(path.dirname(pubspecPath), text);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<List<String>> _workspaceFolderPaths() async {
+    try {
+      final folders = await context.workspace.getWorkspaceFolders();
+      return [
+        for (final folder in folders)
+          if (filePathOf(folder.uri) case final folderPath?) folderPath,
+      ];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Whether [pubspecPath] is a copy in build output or tool caches. Only
+  /// the part inside its workspace folder counts, so a workspace that
+  /// itself lives under a `build` folder is still scanned.
+  static bool isIgnoredPubspec(String pubspecPath, List<String> folders) {
+    var relative = pubspecPath;
+    for (final folder in folders) {
+      if (!path.isWithin(folder, pubspecPath)) continue;
+      relative = path.relative(pubspecPath, from: folder);
+      break;
+    }
+    return path.split(relative).any(_ignoredSegments.contains);
   }
 
   static const _ignoredSegments = {'.dart_tool', 'build', '.symlinks'};
+
+  /// How many pubspecs are read at once.
+  static const _readBatch = 16;
 }
 
 /// The native path of a `file:` URI, or [uriOrPath] itself when it is
