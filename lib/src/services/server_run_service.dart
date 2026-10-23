@@ -38,6 +38,7 @@ class ServerRunService {
 
   /// Servers asked to stop while they were still starting.
   final Set<String> _stopRequested = {};
+  bool _disposed = false;
   final Map<String, Future<LumideOutputChannel>> _channels = {};
   late final DebugSessions _debugSessions = DebugSessions(
     context,
@@ -159,6 +160,8 @@ class ServerRunService {
   }
 
   Future<void> dispose() async {
+    _disposed = true;
+    _stopRequested.addAll(_launching);
     final running = _running.values.toList();
     await Future.wait([for (final server in running) _stop(server)]);
     try {
@@ -199,7 +202,7 @@ class ServerRunService {
   }
 
   Future<void> _launch(LumideLaunchRequest request) async {
-    if (request.providerId != launchProviderServerpod) return;
+    if (request.providerId != launchProviderServerpod || _disposed) return;
     final configuration = request.configuration;
     final event = LumideLaunchEvent(
       providerId: launchProviderServerpod,

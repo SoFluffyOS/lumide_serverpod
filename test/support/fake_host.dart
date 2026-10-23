@@ -23,6 +23,8 @@ class FakeHost implements LumideContext {
   late final FakeDebug debug = FakeDebug();
   @override
   late final FakeEditor editor = FakeEditor();
+  @override
+  late final FakeStatusBar statusBar = FakeStatusBar();
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -265,4 +267,28 @@ class FakeEditor implements LumideEditor {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class FakeStatusBar implements LumideStatusBar {
+  final items = <String>{};
+
+  @override
+  Future<void> createItem({
+    required String id,
+    required String text,
+    String? tooltip,
+    String? command,
+    String? color,
+    String? iconName,
+    String? iconPath,
+    String alignment = 'right',
+    int priority = 0,
+  }) async =>
+      items.add(id);
+
+  @override
+  Future<void> disposeItem(String id) async => items.remove(id);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => null;
 }

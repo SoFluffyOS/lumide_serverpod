@@ -25,6 +25,7 @@ class ServerpodPlugin extends LumidePlugin {
   late GenerateOnSave generateOnSave;
   final List<LumideDisposable> _listeners = [];
   bool _initialized = false;
+  bool _deactivated = false;
   bool _serverFeaturesActive = false;
   bool _languageServerRegistered = false;
   Future<void>? _refreshing;
@@ -88,14 +89,24 @@ class ServerpodPlugin extends LumidePlugin {
 
   /// Status bar, menus and the model language server, once the workspace
   /// has a server.
+  ///
+  /// Each part is set up on its own, so one failing leaves the others.
   Future<void> _activateServerFeatures() async {
-    if (_serverFeaturesActive) return;
+    if (_serverFeaturesActive || _deactivated) return;
     _serverFeaturesActive = true;
     await Future.wait([
       _updateStatusBar(),
-      _registerMenuActions(),
-      _registerLanguageServer(),
+      _setUpSafely('menus', _registerMenuActions),
+      _setUpSafely('model language server', _registerLanguageServer),
     ]);
+  }
+
+  Future<void> _setUpSafely(String name, Future<void> Function() setUp) async {
+    try {
+      await setUp();
+    } catch (error, stackTrace) {
+      logService.error('Could not set up the $name', error, stackTrace);
+    }
   }
 
   Future<void> _registerCommands(LumideContext context) async {
@@ -164,6 +175,7 @@ class ServerpodPlugin extends LumidePlugin {
   /// and the CLI is installed, whichever comes last.
   Future<void> _registerLanguageServer() async {
     if (!_serverFeaturesActive || _languageServerRegistered) return;
+    if (_deactivated) return;
     final enabled = await _context.workspace
             .getConfiguration(confLanguageServer) as bool? ??
         defaultLanguageServer;
@@ -191,7 +203,7 @@ class ServerpodPlugin extends LumidePlugin {
   }
 
   Future<void> _updateStatusBar() async {
-    if (!_serverFeaturesActive) return;
+    if (!_serverFeaturesActive || _deactivated) return;
     try {
       await statusBarService.update(
         version: await cliService.version(),
@@ -229,6 +241,7 @@ class ServerpodPlugin extends LumidePlugin {
 
   /// Scans for servers again, at most once at a time.
   void _scheduleRefresh() {
+    if (_deactivated) return;
     if (_refreshing != null) {
       _refreshAgain = true;
       return;
@@ -268,11 +281,15 @@ class ServerpodPlugin extends LumidePlugin {
   @override
   Future<void> onDeactivate() async {
     if (!_initialized) return;
+    _deactivated = true;
+    runService.onDidChange = null;
+    cliService.onDidChangeVersion = null;
     for (final listener in _listeners) {
       listener.dispose();
     }
     _listeners.clear();
     generateOnSave.dispose();
+    await _refreshing;
     await _disposeSafely('run service', runService.dispose);
     await _disposeSafely('status bar', statusBarService.dispose);
     processHub.dispose();

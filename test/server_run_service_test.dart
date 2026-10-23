@@ -90,4 +90,20 @@ void main() {
     expect(runService.runningServers, isEmpty);
     expect(host.launch.ended.single.exitCode, 1);
   });
+
+  test('turns launches away once disposed', () async {
+    await runService.dispose();
+    await runService.start();
+
+    expect(host.shell.spawned, isEmpty);
+  });
+
+  test('the status item stays gone once disposed', () async {
+    final statusBar = StatusBarService(host);
+    await statusBar.update(version: null, runningServers: const []);
+    await statusBar.dispose();
+    await statusBar.update(version: null, runningServers: const ['late']);
+
+    expect(host.statusBar.items, isEmpty);
+  });
 }

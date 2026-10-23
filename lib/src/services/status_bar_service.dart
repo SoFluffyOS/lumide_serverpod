@@ -16,11 +16,13 @@ class StatusBarService {
   static const String _itemId = 'serverpod.status';
 
   bool _created = false;
+  bool _disposed = false;
 
   Future<void> update({
     required ServerpodVersion? version,
     required List<String> runningServers,
   }) async {
+    if (_disposed) return;
     final text = runningServers.join(', ');
     final tooltip = switch (version) {
       null => 'Serverpod CLI not found',
@@ -77,6 +79,7 @@ class StatusBarService {
   }
 
   Future<void> dispose() async {
+    _disposed = true;
     if (!_created) return;
     _created = false;
     await context.statusBar.disposeItem(_itemId);
