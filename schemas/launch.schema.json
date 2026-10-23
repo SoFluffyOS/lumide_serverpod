@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Lumide Serverpod Launch Configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "server": {
+      "type": "string",
+      "title": "Server",
+      "description": "The server package folder, relative to the workspace folder or using ${workspaceFolder}. Leave empty to use the folder's only server.",
+      "default": "${workspaceFolder}/my_project_server"
+    },
+    "mode": {
+      "title": "Run mode",
+      "description": "The config and passwords the server uses.",
+      "enum": ["development", "staging", "production"],
+      "default": "development"
+    },
+    "applyMigrations": {
+      "type": "boolean",
+      "title": "Apply migrations",
+      "description": "Apply pending database migrations when the server starts."
+    },
+    "watch": {
+      "type": "boolean",
+      "title": "Hot reload",
+      "description": "Generate code and reload the server when files change. Requires Serverpod 4.",
+      "default": true
+    },
+    "docker": {
+      "type": "boolean",
+      "title": "Docker services",
+      "description": "Start the Docker Compose services. Leave unset to let Serverpod decide from the database config. Requires Serverpod 4."
+    },
+    "launchFlutterApps": {
+      "type": "boolean",
+      "title": "Launch Flutter apps",
+      "description": "Launch the companion Flutter apps marked auto_launch. Requires Serverpod 4."
+    },
+    "serverArgs": {
+      "type": "array",
+      "title": "Server arguments",
+      "description": "Extra arguments for the server's bin/main.dart. Enter one argument per line.",
+      "items": { "type": "string" }
+    }
+  }
+}

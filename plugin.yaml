@@ -1,0 +1,90 @@
+id: lumide_serverpod
+name: 'Serverpod'
+description: 'Serverpod support for Lumide IDE'
+entry_point: 'bin/main.dart'
+
+activation_events:
+  - 'workspaceContains:pubspec.yaml'
+  - 'workspaceContains:*.spy.yaml'
+  - 'workspaceContains:*.spy.yml'
+  - 'workspaceContains:*.spy'
+  - 'onCommand:serverpod.create'
+
+permissions:
+  - fileSystem:
+      - '${workspace}/**'
+  - shell:
+      - serverpod
+      - dart
+      - docker
+      - pkill
+      - taskkill
+
+configuration:
+  - key: serverpod.generateOnSave
+    type: boolean
+    default: true
+    title: 'Generate on Save'
+    description: 'Run serverpod generate when a model or endpoint file is saved. Skipped while the server runs, which generates code itself.'
+  - key: serverpod.runMode
+    type: string
+    default: 'development'
+    enum:
+      - 'development'
+      - 'staging'
+      - 'production'
+    title: 'Run Mode'
+    description: 'The mode the server runs in, and whose database migrations apply to.'
+  - key: serverpod.applyMigrationsOnStart
+    type: boolean
+    default: false
+    title: 'Apply Migrations on Start'
+    description: 'Apply pending database migrations when the server starts.'
+  - key: serverpod.launchFlutterApps
+    type: boolean
+    default: false
+    title: 'Launch Flutter Apps'
+    description: 'Let serverpod start launch the companion Flutter apps marked auto_launch. Requires Serverpod 4.'
+  - key: serverpod.languageServer
+    type: boolean
+    default: true
+    title: 'Model Language Server'
+    description: 'Check model files (.spy.yaml) and navigate between models with the Serverpod language server.'
+contributes:
+  commands:
+    - id: serverpod.start
+      title: 'Serverpod: Start Server'
+      category: 'Serverpod'
+    - id: serverpod.stop
+      title: 'Serverpod: Stop Server'
+      category: 'Serverpod'
+    - id: serverpod.generate
+      title: 'Serverpod: Generate Code'
+      category: 'Serverpod'
+    - id: serverpod.createMigration
+      title: 'Serverpod: Create Migration'
+      category: 'Serverpod'
+    - id: serverpod.createRepairMigration
+      title: 'Serverpod: Create Repair Migration'
+      category: 'Serverpod'
+    - id: serverpod.applyMigrations
+      title: 'Serverpod: Apply Migrations'
+      category: 'Serverpod'
+    - id: serverpod.runScript
+      title: 'Serverpod: Run Script'
+      category: 'Serverpod'
+    - id: serverpod.docker.up
+      title: 'Serverpod: Start Docker Services'
+      category: 'Serverpod'
+    - id: serverpod.docker.stop
+      title: 'Serverpod: Stop Docker Services'
+      category: 'Serverpod'
+    - id: serverpod.create
+      title: 'Serverpod: New Project'
+      category: 'Serverpod'
+    - id: serverpod.upgrade
+      title: 'Serverpod: Upgrade CLI'
+      category: 'Serverpod'
+    - id: serverpod.tools
+      title: 'Serverpod: Tools Menu'
+      category: 'Serverpod'
