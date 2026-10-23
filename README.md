@@ -17,6 +17,8 @@ The official [Serverpod](https://serverpod.dev) extension for [Lumide IDE](https
 
 ## Requirements
 
+Lumide 0.24.0 and later.
+
 Install the Serverpod CLI and make sure `serverpod` is on your `PATH`:
 
 ```sh
